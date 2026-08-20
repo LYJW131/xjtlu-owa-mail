@@ -20,6 +20,7 @@ dist/
 venv/
 env/
 ENV/
+node_modules/
 
 # 测试与覆盖率
 .pytest_cache/

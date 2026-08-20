@@ -18,9 +18,9 @@ from typing import Any
 
 import requests
 
-from owa_auth import get_owa_session
+from owa_auth import get_owa_session, login_owa
 from owa_mail import OWAMailClient
-from uim_login import get_tgc_cookie
+from xjtlu_uim_login import load_project_env
 
 CACHE_DIR = Path(".cache")
 OWA_CACHE_FILE = CACHE_DIR / "owa_session.json"
@@ -89,8 +89,10 @@ def _save_owa_cache(email_account: str, session: requests.Session, canary: str) 
     _save_json(OWA_CACHE_FILE, payload)
 
 
-def _save_tgc_cache(tgc: str) -> None:
-    payload = {"tgc": tgc, "updated_at": _utc_now_iso()}
+def _save_tgc_cache(tgc: str, cookies: list[dict[str, Any]] | None = None) -> None:
+    payload: dict[str, Any] = {"tgc": tgc, "updated_at": _utc_now_iso()}
+    if cookies:
+        payload["cookies"] = cookies
     _save_json(TGC_CACHE_FILE, payload)
 
 
@@ -127,7 +129,11 @@ def _try_login_with_cached_tgc(email_account: str) -> OWAMailClient | None:
     if not tgc:
         return None
     try:
-        session, canary = get_owa_session(tgc, email_account)
+        uim_cookies = data.get("cookies")
+        if isinstance(uim_cookies, list) and uim_cookies:
+            session, canary, _tgc, _cks = login_owa(email_account, uim_cookies=uim_cookies)
+        else:
+            session, canary = get_owa_session(tgc, email_account)
     except Exception as exc:
         print(f"[-] 缓存 TGC 重登 OWA 异常: {exc}")
         return None
@@ -158,18 +164,15 @@ def _try_get_owa_session(tgc: str, email_account: str, retries: int = 2):
 
 def _fresh_login(email_account: str) -> OWAMailClient | None:
     try:
-        tgc = get_tgc_cookie()
+        session, canary, tgc, uim_cookies = login_owa(email_account)
     except Exception as exc:
-        print(f"[-] UIM 登录失败: {exc}")
+        print(f"[-] UIM/OWA 登录失败: {exc}")
         return None
-    if not tgc:
-        print("[-] UIM 登录返回空 TGC")
-        return None
-    _save_tgc_cache(tgc)
-    session, canary = _try_get_owa_session(tgc, email_account)
     if not session or not canary:
-        print("[-] 获取 TGC 成功但 OWA 会话建立失败，稍后可重试")
+        print("[-] 登录未返回 OWA 会话")
         return None
+    if tgc:
+        _save_tgc_cache(tgc, uim_cookies or None)
     client = _validate_owa(session, canary)
     if not client:
         print("[-] OWA 会话验证失败（folder_stats 返回 None）")
@@ -191,6 +194,7 @@ def get_authenticated_client(
     """
     if not email_account:
         raise ValueError("email_account 不能为空")
+    load_project_env()
 
     if not force_refresh:
         client = _load_owa_client_from_cache(email_account)
