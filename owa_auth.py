@@ -1,4 +1,4 @@
-"""OWA SSO：微软授权页（IE 兼容表单）+ jsdom 过 UIM 瑞数 + KMSI。"""
+"""OWA SSO：微软授权页（IE 兼容表单）+ UIM 登录 + KMSI。"""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def login_owa(email_account: str, uim_cookies: list[dict] | None = None):
     idp_action, idp_data = _microsoft_saml_request(session, email_account)
 
     skip_login = bool(uim_cookies and any(c.get("name") == "TGC" for c in uim_cookies))
-    print("[*] 正在用 xjtlu-uim-login 过瑞数并登录 UIM / 提交 IdP...")
+    print("[*] 正在用 xjtlu-uim-login 登录 UIM / 提交 IdP...")
     result = uim_login(
         username,
         password,
@@ -115,7 +115,7 @@ def login_owa(email_account: str, uim_cookies: list[dict] | None = None):
     uim_cookies_out = result.get("cookies") or []
     saml_html = result.get("samlHtml")
     if not saml_html:
-        raise RuntimeError("jsdom 未返回 SAMLResponse")
+        raise RuntimeError("UIM 登录未返回 SAMLResponse")
 
     action, data = _auto_submit(saml_html, idp_action)
     if not action or "SAMLResponse" not in data:
@@ -146,7 +146,7 @@ def login_owa(email_account: str, uim_cookies: list[dict] | None = None):
 
 def get_owa_session(tgc_cookie: str, email_account: str):
     """
-    兼容旧签名。有 TGC 时注入 jsdom cookie 并走同一套 SSO。
+    兼容旧签名。有 TGC 时注入 cookie 并走同一套 SSO。
     """
     cookies = None
     if tgc_cookie:

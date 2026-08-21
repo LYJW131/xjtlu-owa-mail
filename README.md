@@ -2,13 +2,13 @@
 
 通过 XJTLU 统一身份认证（UIM）自动登录，获取 OWA 邮箱会话，以 **Python 库** 方式读取、搜索、发送与管理邮件。
 
-整个流程无需手动复制 Cookie，也不启动完整浏览器。UIM 登录复用独立包 [`xjtlu-uim-login`](https://github.com/LYJW131/xjtlu-uim-login)（jsdom 过瑞数 412 + `doLogin`）。微软 SSO 用 IE 兼容页拿 `SAMLRequest`，再在同一次 jsdom 会话里交给学校 IdP。
+整个流程无需手动复制 Cookie，也不启动完整浏览器。UIM 登录复用独立包 [`xjtlu-uim-login`](https://github.com/LYJW131/xjtlu-uim-login)：当前这版瑞数按 User-Agent 分流，默认 HTTP `requests` 走 `doLogin`，412 时才回退 jsdom。微软 SSO 用 IE 兼容页拿 `SAMLRequest`，再在同一次 UIM 会话里交给学校 IdP。
 
 ## 功能
 
 | 模块 | 能力 |
 | --- | --- |
-| `xjtlu-uim-login` | 外部包：UIM 瑞数挑战 + `doLogin` + 可选 IdP |
+| `xjtlu-uim-login` | 外部包：HTTP 登录 UIM（412 时回退 jsdom）+ 可选 IdP |
 | `uim_login.py` | 兼容入口，转调 `xjtlu_uim_login.get_tgc` |
 | `owa_auth.py` | 微软 SAML + KMSI，返回 `session` + `X-OWA-CANARY` |
 | `owa_mail.py` | **`OWAMailClient`**：搜索、正文、会话、附件、发信、回复/转发、标记/移动/删除 |
@@ -63,7 +63,7 @@
 ## 环境要求
 
 - Python 3.12+
-- Node.js 18+（`xjtlu-uim-login` 首次运行会自动 `npm install jsdom`）
+- Node.js 18+ 仅在 HTTP 路径拿到 412 时需要（`xjtlu-uim-login` 会自动 `npm install jsdom`）
 - 依赖见 `requirements.txt`
 
 ## 安装
@@ -137,6 +137,7 @@ python3 example.py
 ## 说明
 
 - 本项目仅用于个人邮箱自动化学习用途，请遵守学校相关规定。
-- 瑞数会给 XHR 自动加上 `KgdICDMu`；页面上的 `/sso-mfa/rest/ueba/send` 只服务浏览器 UI，JSON `doLogin` 不依赖它。
+- 当前 UIM 瑞数默认 412，但对含 `darwin` / `okhttp` 等子串或手机 WebKit 的 UA 直接放行；细节见 [`xjtlu-uim-login` README](https://github.com/LYJW131/xjtlu-uim-login)。
+- 瑞数会给浏览器 XHR 自动加上 `KgdICDMu`；页面上的 `/sso-mfa/rest/ueba/send` 只服务浏览器 UI，JSON `doLogin` 不依赖它。
 - 筛选条件通过 EWS `Restriction` 在服务端执行（已在 XJTLU OWA 实测验证 JSON 方言）。
 - 若出现 `ProxyError` / `SSLError`，多为本地网络无法访问微软登录域名，与代码逻辑无关。
