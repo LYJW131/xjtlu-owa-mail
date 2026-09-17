@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "xjtlu-owa-mail",
+  "owner": {
+    "name": "LYJW131",
+    "url": "https://github.com/LYJW131"
+  },
+  "description": "Install xjtlu-owa-mail as a Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "xjtlu-owa-mail",
+      "source": "./",
+      "description": "Read, search, send, reply, forward and manage XJTLU OWA mail with automatic UIM + Microsoft SSO login.",
+      "license": "MIT",
+      "keywords": ["xjtlu", "owa", "outlook", "exchange", "ews", "email", "uim", "sso"]
+    }
+  ]
+}

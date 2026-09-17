@@ -6,7 +6,10 @@ OWA 邮件操作模块
 from __future__ import annotations
 
 import base64
+import html as _html
+import mimetypes
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -74,7 +77,47 @@ SORT_FIELDS = {
 
 ImportanceLevel = Literal["Low", "Normal", "High"]
 BodyType = Literal["Text", "HTML"]
+# 发信时可用 "auto"：含 HTML 标签则按 HTML 发送，否则按纯文本发送（保留换行）。
+SendBodyType = Literal["Text", "HTML", "auto"]
 DateInput = Union[str, date, datetime]
+
+_HTML_TAG_RE = re.compile(
+    r"<(?:!doctype|html|body|head|p|br|div|span|a|b|i|u|em|strong|ul|ol|li|table|tr|td|th|"
+    r"h[1-6]|img|pre|code|blockquote|hr|font|style)\b[^>]*>",
+    re.IGNORECASE,
+)
+
+
+def looks_like_html(text: str) -> bool:
+    """粗略判断正文是否为 HTML（出现常见标签即认为是）。"""
+    return bool(text) and bool(_HTML_TAG_RE.search(text))
+
+
+def text_to_html(text: str) -> str:
+    """纯文本 → HTML：转义、空行分段、单换行转 <br>，保留缩进空格。"""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = re.split(r"\n{2,}", normalized.strip("\n"))
+    out = []
+    for para in paragraphs:
+        escaped = _html.escape(para, quote=False)
+        escaped = re.sub(r"^( +)", lambda m: "&nbsp;" * len(m.group(1)), escaped, flags=re.M)
+        out.append("<p>" + escaped.replace("\n", "<br>\n") + "</p>")
+    return "\n".join(out)
+
+
+def resolve_body(body: str, body_type: SendBodyType = "auto") -> tuple[BodyType, str]:
+    """
+    决定实际发送的 BodyType 与内容。
+
+    OWA 对 BodyType=HTML 的正文按 HTML 渲染，纯文本里的换行会被折叠成空格；
+    所以纯文本要么按 Text 发（服务端自己转成带 <br> 的 HTML），要么先转成 HTML。
+    """
+    kind = (body_type or "auto")
+    if kind == "auto":
+        return ("HTML", body) if looks_like_html(body) else ("Text", body)
+    if kind.upper() == "HTML":
+        return ("HTML", body if looks_like_html(body) else text_to_html(body))
+    return ("Text", body)
 
 
 @dataclass
@@ -308,6 +351,7 @@ class OWAMailClient:
         self.session = session
         self.canary = canary
         self._folder_cache: dict[str, dict] = {}
+        self.last_errors: list[str] = []
 
     def _build_headers(self, action: str) -> dict:
         return {
@@ -339,8 +383,21 @@ class OWAMailClient:
             return None
 
     def _response_ok(self, data: dict | None) -> bool:
-        msg = self._first_response(data)
-        return bool(msg and msg.get("ResponseCode") == "NoError")
+        """所有 ResponseMessages 都是 NoError 才算成功；失败原因记录在 self.last_errors。"""
+        self.last_errors = []
+        try:
+            items = data["Body"]["ResponseMessages"]["Items"]
+        except (KeyError, TypeError):
+            self.last_errors = ["无响应或响应结构异常"]
+            return False
+        if not items:
+            self.last_errors = ["响应为空"]
+            return False
+        for msg in items:
+            code = (msg or {}).get("ResponseCode")
+            if code != "NoError":
+                self.last_errors.append(f"{code}: {(msg or {}).get('MessageText') or ''}".strip())
+        return not self.last_errors
 
     def _resolve_folder_id(self, folder: str) -> dict:
         key = folder.strip().lower()
@@ -638,7 +695,7 @@ class OWAMailClient:
         *,
         cc: str | Sequence[str] | None = None,
         bcc: str | Sequence[str] | None = None,
-        body_type: BodyType = "HTML",
+        body_type: SendBodyType = "auto",
         attachments: Sequence[tuple[str, bytes | str]] | None = None,
     ) -> dict:
         def as_list(v: str | Sequence[str] | None) -> list[str]:
@@ -648,13 +705,14 @@ class OWAMailClient:
                 return [v]
             return list(v)
 
+        real_type, real_body = resolve_body(body, body_type)
         item: dict[str, Any] = {
             "__type": "Message:#Exchange",
             "Subject": subject,
             "Body": {
                 "__type": "BodyContentType:#Exchange",
-                "BodyType": body_type,
-                "Value": body,
+                "BodyType": real_type,
+                "Value": real_body,
             },
             "ToRecipients": [_email_address(a) for a in as_list(to)],
         }
@@ -676,7 +734,7 @@ class OWAMailClient:
                         "__type": "FileAttachment:#Exchange",
                         "Name": name,
                         "Content": base64.b64encode(raw).decode("ascii"),
-                        "ContentType": "application/octet-stream",
+                        "ContentType": mimetypes.guess_type(name)[0] or "application/octet-stream",
                     }
                 )
             item["Attachments"] = att_items
@@ -690,12 +748,17 @@ class OWAMailClient:
         *,
         cc: str | Sequence[str] | None = None,
         bcc: str | Sequence[str] | None = None,
-        body_type: BodyType = "HTML",
+        body_type: SendBodyType = "auto",
         attachments: Sequence[tuple[str, bytes | str]] | None = None,
         save_to_sent: bool = True,
         draft: bool = False,
     ) -> bool:
-        """发送邮件或保存草稿。"""
+        """
+        发送邮件或保存草稿。
+
+        body_type="auto"（默认）：正文含 HTML 标签按 HTML 发，否则按纯文本发并保留换行；
+        "Text" 强制纯文本；"HTML" 强制 HTML（纯文本会先转成 <p>/<br>）。
+        """
         item = self._build_message_item(
             to, subject, body, cc=cc, bcc=bcc, body_type=body_type, attachments=attachments
         )
@@ -721,15 +784,16 @@ class OWAMailClient:
         body: str,
         *,
         reply_all: bool = False,
-        body_type: BodyType = "HTML",
+        body_type: SendBodyType = "auto",
         change_key: str = "",
     ) -> bool:
-        """回复邮件。OWA 写操作要求 ChangeKey；未传时自动查询。"""
+        """回复邮件。OWA 写操作要求 ChangeKey；未传时自动查询。body_type 语义同 send_message。"""
         ck = change_key or self._get_change_key(item_id)
         item_type = "ReplyAllToItem:#Exchange" if reply_all else "ReplyToItem:#Exchange"
         ref_id: dict[str, Any] = {"__type": "ItemId:#Exchange", "Id": item_id}
         if ck:
             ref_id["ChangeKey"] = ck
+        real_type, real_body = resolve_body(body, body_type)
         req = {
             "__type": "CreateItemRequest:#Exchange",
             "Items": [
@@ -738,8 +802,8 @@ class OWAMailClient:
                     "ReferenceItemId": ref_id,
                     "NewBodyContent": {
                         "__type": "BodyContentType:#Exchange",
-                        "BodyType": body_type,
-                        "Value": body,
+                        "BodyType": real_type,
+                        "Value": real_body,
                     },
                 }
             ],
@@ -754,15 +818,16 @@ class OWAMailClient:
         to: str | Sequence[str],
         body: str = "",
         *,
-        body_type: BodyType = "HTML",
+        body_type: SendBodyType = "auto",
         change_key: str = "",
     ) -> bool:
-        """转发邮件。OWA 写操作要求 ChangeKey；未传时自动查询。"""
+        """转发邮件。OWA 写操作要求 ChangeKey；未传时自动查询。body_type 语义同 send_message。"""
         ck = change_key or self._get_change_key(item_id)
         to_list = [to] if isinstance(to, str) else list(to)
         ref_id: dict[str, Any] = {"__type": "ItemId:#Exchange", "Id": item_id}
         if ck:
             ref_id["ChangeKey"] = ck
+        real_type, real_body = resolve_body(body, body_type)
         req = {
             "__type": "CreateItemRequest:#Exchange",
             "Items": [
@@ -772,8 +837,8 @@ class OWAMailClient:
                     "ToRecipients": [_email_address(a) for a in to_list],
                     "NewBodyContent": {
                         "__type": "BodyContentType:#Exchange",
-                        "BodyType": body_type,
-                        "Value": body,
+                        "BodyType": real_type,
+                        "Value": real_body,
                     },
                 }
             ],

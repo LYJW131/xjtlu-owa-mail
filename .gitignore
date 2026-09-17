@@ -34,3 +34,6 @@ htmlcov/
 .vscode/
 *.swp
 .DS_Store
+
+# CLI 附件下载目录
+downloads/

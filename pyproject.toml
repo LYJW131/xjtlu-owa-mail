@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xjtlu-owa-mail"
+version = "0.2.0"
+description = "XJTLU OWA mail automation: UIM login (via xjtlu-uim-login) + Microsoft SSO + EWS JSON client"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31.0",
+  "beautifulsoup4>=4.12.0",
+  "python-dotenv>=1.0.0",
+  "xjtlu-uim-login @ git+https://github.com/LYJW131/xjtlu-uim-login.git",
+]
+
+[tool.setuptools.packages.find]
+include = ["xjtlu_owa_mail"]
