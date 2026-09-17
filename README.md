@@ -1,143 +1,90 @@
 # XJTLU OWA Mail
 
-通过 XJTLU 统一身份认证（UIM）自动登录，获取 OWA 邮箱会话，以 **Python 库** 方式读取、搜索、发送与管理邮件。
+通过 XJTLU 统一身份认证（UIM）自动登录，获取 OWA 邮箱会话，以 **Python 库** 与 **Cursor Skill** 方式读取、搜索、发送与管理邮件。
 
-整个流程无需手动复制 Cookie，也不启动完整浏览器。UIM 登录复用独立包 [`xjtlu-uim-login`](https://github.com/LYJW131/xjtlu-uim-login)：当前这版瑞数按 User-Agent 分流，默认 HTTP `requests` 走 `doLogin`，412 时才回退 jsdom。微软 SSO 用 IE 兼容页拿 `SAMLRequest`，再在同一次 UIM 会话里交给学校 IdP。
+整个流程无需手动复制 Cookie，也不启动完整浏览器。UIM 登录复用独立包 [`xjtlu-uim-login`](https://github.com/LYJW131/xjtlu-uim-login)。
 
-## 功能
+## 两种用法
 
-| 模块 | 能力 |
+### 1. Cursor Skill（推荐给 Agent）
+
+本仓库在 `.cursor/skills/xjtlu-owa-mail/` 提供规范 skill（`SKILL.md` + `scripts/` + `references/` + `assets/`）。
+
+| 安装方式 | 做法 |
 | --- | --- |
-| `xjtlu-uim-login` | 外部包：HTTP 登录 UIM（412 时回退 jsdom）+ 可选 IdP |
-| `uim_login.py` | 兼容入口，转调 `xjtlu_uim_login.get_tgc` |
-| `owa_auth.py` | 微软 SAML + KMSI，返回 `session` + `X-OWA-CANARY` |
-| `owa_mail.py` | **`OWAMailClient`**：搜索、正文、会话、附件、发信、回复/转发、标记/移动/删除 |
-| `auth.py` | 双层认证缓存（OWA 会话缓存 → TGC 缓存 → UIM 登录） |
+| 打开本仓库作项目 | Cursor 自动发现 `.cursor/skills/` |
+| 用户级 skill | 将 `.cursor/skills/xjtlu-owa-mail` 复制/软链到 `~/.cursor/skills/xjtlu-owa-mail` |
+| 插件 | 仓库根有 `.cursor-plugin/plugin.json`，可用 Customize → From GitHub Repository 导入（需按 Cursor 插件流程） |
 
-### `OWAMailClient` API 摘要
+Agent 侧入口说明见 skill 内 `SKILL.md`；详细 API / 认证 / 约束在 `references/`。
 
-**搜索 / 读取**
-
-- `find_messages(folder, sender=, recipient=, subject=, body=, since=, until=, unread_only=, has_attachments=, importance=, sort_by=, limit=, offset=)`  
-  服务端 `Restriction` 过滤（发件人/主题/正文/日期/未读/附件等），支持 `inbox` / `sent` / `drafts` / `deleted` / `junk` / `archive` 等文件夹别名。
-
-**正文 / 统计**
-
-- `get_message(item_id, body_type="Text"\|"HTML")` → `MessageDetail`（正文 + 收件人 + 附件元数据）
-- `get_conversation(item_id)` → 同会话线程邮件列表
-- `folder_stats(folder)` → 总数 / 未读数
-
-**附件**
-
-- `list_attachments(item_id)`
-- `download_attachment(attachment_id, save_path)`
-
-**发信**
-
-- `send_message(to, subject, body, cc=, bcc=, body_type=, attachments=, draft=)`  
-  `attachments` 为 `(文件名, bytes|str)` 列表。
-
-**回复 / 转发**
-
-- `reply(item_id, body, reply_all=False)`
-- `forward(item_id, to, body)`
-
-**管理（会修改邮箱）**
-
-- `mark_read(item_ids, read=True)`
-- `move(item_ids, to_folder)`
-- `delete(item_ids, hard=False)`
-- `set_flag(item_ids, flagged=True)`
-- `categorize(item_ids, categories)`
-
-## 认证缓存机制
-
-`auth.get_authenticated_client(email_account)` 默认使用三级回退：
-
-1. 先读取 `.cache/owa_session.json` 并验证缓存会话是否可用  
-2. OWA 会话失效时，读取 `.cache/tgc.json` 用缓存 TGC 重登 OWA  
-3. TGC 失效时，调用 UIM 完整登录获取新 TGC，再登录 OWA
-
-缓存文件仅保存在本地并设置为 `0600` 权限，且已被 `.gitignore` 忽略。
-
-## 环境要求
-
-- Python 3.12+
-- Node.js 18+ 仅在 HTTP 路径拿到 412 时需要（`xjtlu-uim-login` 会自动 `npm install jsdom`）
-- 依赖见 `requirements.txt`
-
-## 安装
+### 2. Python 库（本仓库根目录保持可运行）
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # 填写凭证
+python3 .cursor/skills/xjtlu-owa-mail/scripts/check_setup.py
+python3 example.py
 ```
 
-## 配置
-
-```bash
-cp .env.example .env
-```
-
-| 变量 | 说明 |
-| --- | --- |
-| `XJTLU_USERNAME` | UIM 用户名（不含 `@student.xjtlu.edu.cn`） |
-| `XJTLU_PASSWORD` | UIM 登录密码 |
-| `XJTLU_OTP_URL` | OTP 地址，`otpauth://` 开头 |
-
-> `.env` 已被 `.gitignore` 忽略。请勿将真实凭证提交到仓库。
-
-## 使用示例
+根目录 `auth.py` / `owa_mail.py` 等为兼容 shim，仍支持：
 
 ```python
 from auth import get_authenticated_client
 
 email = "Yourname.Lastname25@student.xjtlu.edu.cn"
 mail = get_authenticated_client(email)
-if not mail:
-    raise SystemExit("认证失败")
-
-# 搜索：某发件人、5月29日之后、未读
-items = mail.find_messages(
-    "inbox",
-    sender="Registry",
-    since="2026-05-29",
-    unread_only=True,
-    limit=20,
-)
-
-# 读正文
-if items:
-    detail = mail.get_message(items[0].item_id, body_type="HTML")
-    print(detail.body)
-
-# 文件夹统计
-print(mail.folder_stats("inbox"))
+items = mail.find_messages("inbox", sender="Registry", since="2026-05-29", unread_only=True, limit=20)
 ```
 
-运行演示：
+权威实现位于：
 
-```bash
-python3 example.py
-```
+`.cursor/skills/xjtlu-owa-mail/scripts/xjtlu_owa_mail/`
 
-`example.py` 中标记已读、发信、删除等写操作默认注释，按需取消。
+## 功能一览
 
-## 代码结构
-
-| 文件 | 职责 |
+| 模块 | 能力 |
 | --- | --- |
-| `example.py` | 使用 `auth.get_authenticated_client` 的完整调用示例 |
-| `uim_login.py` | 兼容入口（`xjtlu_uim_login.get_tgc`） |
-| `owa_auth.py` | 微软 SAMLRequest + KMSI → OWA |
-| `owa_mail.py` | 邮件库（`OWAMailClient`、`MailMessage` 等） |
-| `auth.py` | 本地认证缓存与会话回退 |
+| `xjtlu-uim-login` | 外部包：HTTP 登录 UIM（412 时回退 jsdom）+ 可选 IdP |
+| `xjtlu_owa_mail.uim_login` | 兼容入口，转调 `get_tgc` |
+| `xjtlu_owa_mail.owa_auth` | 微软 SAML + KMSI → `session` + canary |
+| `xjtlu_owa_mail.owa_mail` | `OWAMailClient`：搜索、正文、会话、附件、发信、回复/转发、标记/移动/删除 |
+| `xjtlu_owa_mail.auth` | 三级认证缓存（OWA 会话 → TGC → UIM） |
+
+## 环境变量
+
+| 变量 | 说明 |
+| --- | --- |
+| `XJTLU_USERNAME` | UIM 用户名（不含邮箱后缀） |
+| `XJTLU_PASSWORD` | 密码 |
+| `XJTLU_OTP_URL` | `otpauth://` TOTP |
+
+`.env` / `.cache/` 已被 gitignore。请勿提交真实凭证。
+
+## 仓库结构
+
+```text
+.
+├── README.md
+├── requirements.txt
+├── .env.example
+├── example.py                 # 转发到 skill 演示脚本
+├── auth.py / owa_*.py …       # 兼容 shim → skill 包
+├── .cursor-plugin/plugin.json # 可选：作为 Cursor 插件分发
+└── .cursor/skills/xjtlu-owa-mail/
+    ├── SKILL.md
+    ├── scripts/
+    │   ├── xjtlu_owa_mail/    # 权威 Python 包
+    │   ├── example.py
+    │   └── check_setup.py
+    ├── references/
+    └── assets/
+```
 
 ## 说明
 
-- 本项目仅用于个人邮箱自动化学习用途，请遵守学校相关规定。
-- 当前 UIM 瑞数默认 412，但对含 `darwin` / `okhttp` 等子串或手机 WebKit 的 UA 直接放行；细节见 [`xjtlu-uim-login` README](https://github.com/LYJW131/xjtlu-uim-login)。
-- 瑞数会给浏览器 XHR 自动加上 `KgdICDMu`；页面上的 `/sso-mfa/rest/ueba/send` 只服务浏览器 UI，JSON `doLogin` 不依赖它。
-- 筛选条件通过 EWS `Restriction` 在服务端执行（已在 XJTLU OWA 实测验证 JSON 方言）。
-- 若出现 `ProxyError` / `SSLError`，多为本地网络无法访问微软登录域名，与代码逻辑无关。
+- 仅用于个人邮箱自动化学习，请遵守学校规定。
+- 写操作在示例中默认注释；Agent 也应默认只读，除非用户明确要求。
+- 若出现 `ProxyError` / `SSLError`，多为本地网络无法访问微软登录域名。

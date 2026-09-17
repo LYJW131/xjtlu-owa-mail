@@ -1,0 +1,12 @@
+{
+  "name": "xjtlu-owa-mail",
+  "displayName": "XJTLU OWA Mail",
+  "version": "1.0.0",
+  "description": "XJTLU UIM 登录 + OWA 邮件读写的 Cursor Skill / Python 库",
+  "author": {
+    "name": "LYJW131"
+  },
+  "repository": "https://github.com/LYJW131/xjtlu-owa-mail",
+  "keywords": ["xjtlu", "owa", "email", "uim", "mail"],
+  "skills": [".cursor/skills/xjtlu-owa-mail"]
+}
